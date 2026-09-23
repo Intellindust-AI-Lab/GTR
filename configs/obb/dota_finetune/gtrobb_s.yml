@@ -1,0 +1,51 @@
+__include__: [
+  '../../dataset/dota_detection.yml',
+  '../gtrobb_base.yml',
+]
+
+output_dir: outputs/dota_finetune/gtrobb_s
+
+GTR:
+  backbone: ViTAdapterSpatialSwiGLU
+
+ViTAdapterSpatialSwiGLU:
+  embed_dim: 192
+  num_heads: 3
+  interaction_indexes: [3, 7, 11]
+  multi_layer_same_res: True
+  drop_path_rate: 0.0
+  weights_path: weights/vit_tiny_spatial_swiglu_distilled.pth
+
+GTREncoder:
+  in_channels: [192, 192, 192]
+  hidden_dim: 192
+
+OBBGTRTransformer:
+  feat_channels: [192, 192, 192]
+  hidden_dim: 192
+  dim_feedforward: 512
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*.backbone)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.00018
+    -
+      params: '^(?=.*.backbone)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.00018
+      weight_decay: 0.
+    -
+      params: '^(?!.*\.backbone)(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+  lr: 0.0005
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
+
+epochs: 20
+flat_epoch: 20
+
+train_dataloader:
+  dataset:
+    transforms:
+      stop_epoch: 20

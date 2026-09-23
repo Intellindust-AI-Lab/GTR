@@ -1,0 +1,42 @@
+task: semantic_segmentation
+
+evaluator:
+  type: SemSegEvaluator
+  num_classes: 19
+  ignore_index: 255
+
+num_classes: 19
+remap_mscoco_category: False
+
+train_dataloader:
+  type: DataLoader
+  dataset:
+    type: CityscapesSemSeg
+    data_root: ./dataset/cityscapes
+    ann_file: train.txt
+    ignore_index: 255
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: True
+  num_workers: 4
+  drop_last: True
+  collate_fn:
+    type: SemSegCollateFunction
+
+val_dataloader:
+  type: DataLoader
+  dataset:
+    type: CityscapesSemSeg
+    data_root: ./dataset/cityscapes
+    ann_file: val.txt
+    ignore_index: 255
+    keep_native_label: True
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: False
+  num_workers: 4
+  drop_last: False
+  collate_fn:
+    type: SemSegCollateFunction

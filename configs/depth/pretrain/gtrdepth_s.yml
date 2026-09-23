@@ -1,0 +1,49 @@
+__include__: [
+  '../../dataset/depth_pretrain_mix.yml',
+  '../gtrdepth_pretrain_base.yml',
+]
+
+output_dir: outputs/depth_pretrain/gtrdepth_s
+
+GTRDepth:
+  backbone: ViTAdapterSpatialSwiGLU
+
+ViTAdapterSpatialSwiGLU:
+  embed_dim: 192
+  num_heads: 3
+  interaction_indexes: [3, 7, 11]
+  multi_layer_same_res: True
+  skip_weights_warning: True
+
+GTREncoder:
+  in_channels: [192, 192, 192]
+  hidden_dim: 192
+  scale_factors: [2.0, 1.0, 0.5]
+  feat_strides: [8, 16, 32]
+  num_blocks: 3
+  layer_norm: True
+  act: silu
+
+DPTDepthHead:
+  in_channels: [192, 192, 192]
+  features: 128
+  use_bn: False
+
+optimizer:
+  type: AdamW
+
+  params:
+    -
+      params: '^(?=.*.backbone)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.0001
+    -
+      params: '^(?=.*.backbone)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.0001
+      weight_decay: 0.
+    -
+      params: '^(?!.*\.backbone)(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+
+  lr: 0.0002
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001

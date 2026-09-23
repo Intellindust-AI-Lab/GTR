@@ -1,0 +1,22 @@
+# Reference environment from README "Benchmark" section 1:
+#   Python 3.11, CUDA toolkit 12.8 (nvcc major version must match torch's
+#   +cu128, or the engine/gtr/csrc extension build is refused).
+# The three pins below are load-bearing: torch/torchvision are the versions the
+# reference latencies were measured with, and the csrc .so is ABI-tied to torch.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0
+torchvision==0.26.0
+flash-linear-attention==0.5.0
+
+# Unpinned runtime deps
+calflops                 # imported at engine.misc top level; without it `import engine` fails
+einops
+faster-coco-eval
+h5py                     # depth task: reads nyu_depth_v2_labeled.mat (MATLAB v7.3 / HDF5)
+lmdb
+ninja                    # builds the engine/gtr/csrc CUDA extension
+opencv-python-headless   # not optional: OBB / pose transforms import cv2
+pyyaml
+scipy
+tensorboard
+transformers

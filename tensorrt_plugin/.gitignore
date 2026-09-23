@@ -1,0 +1,5 @@
+# Benchmark artifacts: engines, ONNX and profiles are ~10 GB
+out/
+
+# Local TensorRT install (symlink)
+tensorrt

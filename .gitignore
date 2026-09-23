@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+outputs/
+# CUDA GLA extension build artifacts (engine/gtr/backbone/csrc/build.sh)
+engine/gtr/backbone/csrc/build/
+*.so
+# leading slash: only the top-level data root, NOT engine/data/dataset, configs/dataset
+/dataset/
+/weights/
+*.pth
+*.onnx
+.env
+.vscode/
+.DS_Store

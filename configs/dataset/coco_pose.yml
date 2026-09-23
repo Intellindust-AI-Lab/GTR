@@ -1,0 +1,41 @@
+task: pose
+
+evaluator:
+  type: CocoEvaluator
+  iou_types: ['keypoints', ]
+
+num_classes: 2
+
+train_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoPoseDetection
+    img_folder: ./dataset/coco/train2017/
+    ann_file: ./dataset/coco/annotations/person_keypoints_train2017.json
+    return_masks: False
+    transforms:
+      type: PoseCompose
+      ops: ~
+  shuffle: True
+  num_workers: 4
+  total_batch_size: 32
+  drop_last: True
+  collate_fn:
+    type: BatchImageCollateFunction
+
+val_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoPoseDetection
+    img_folder: ./dataset/coco/val2017/
+    ann_file: ./dataset/coco/annotations/person_keypoints_val2017.json
+    return_masks: False
+    transforms:
+      type: PoseCompose
+      ops: ~
+  shuffle: False
+  num_workers: 4
+  total_batch_size: 64
+  drop_last: False
+  collate_fn:
+    type: BatchImageCollateFunction

@@ -1,0 +1,34 @@
+__include__: [
+  '../../dataset/cityscapes_semseg.yml',
+  '../gtrsemseg_base.yml',
+]
+
+output_dir: outputs/cityscapes_finetune/gtrsemseg_m
+
+ViTAdapterSpatialSwiGLU:
+  embed_dim: 256
+  num_heads: 4
+  weights_path: weights/vit_tinyplus_spatial_swiglu_distilled.pth
+
+GTREncoder:
+  in_channels: [256, 256, 256]
+  hidden_dim: 256
+
+SemSegHead:
+  in_channels: 256
+  hidden_dim: 256
+
+optimizer:
+  params:
+    -
+      params: '^(?=.*.backbone)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.00018
+    -
+      params: '^(?=.*.backbone)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.00018
+      weight_decay: 0.
+    -
+      params: '^(?!.*\.backbone)(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+
+  weight_decay: 0.0001

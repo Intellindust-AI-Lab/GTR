@@ -1,0 +1,138 @@
+task: pose
+
+model: GTRPose
+criterion: GTRPoseCriterion
+postprocessor: GTRPosePostProcessor
+
+use_focal_loss: True
+eval_spatial_size: [640, 640]
+
+GTRPose:
+  backbone: ViTAdapterSpatialSwiGLU
+  encoder: GTREncoder
+  decoder: GTRPoseTransformer
+
+ViTAdapterSpatialSwiGLU:
+  interaction_indexes: [3, 7, 11]
+  multi_layer_same_res: True
+
+GTREncoder:
+  scale_factors: [2.0, 1.0, 0.5]
+  feat_strides: [8, 16, 32]
+  num_blocks: 3
+  layer_norm: True
+  act: silu
+
+GTRPoseTransformer:
+  hidden_dim: 256
+  dropout: 0.0
+  nhead: 8
+  num_queries: 60
+  dim_feedforward: 1024
+  num_decoder_layers: 6
+  normalize_before: False
+  return_intermediate_dec: True
+  activation: 'relu'
+  num_feature_levels: 3
+  dec_n_points: 4
+  learnable_tgt_init: True
+  two_stage_type: 'standard'
+  num_body_points: 17
+  aux_loss: True
+  dec_pred_class_embed_share: False
+  dec_pred_pose_embed_share: False
+  two_stage_class_embed_share: False
+  two_stage_bbox_embed_share: False
+  cls_no_bias: False
+  feat_strides: [8, 16, 32]
+  reg_max: 32
+  reg_scale: 4
+
+GTRPoseCriterion:
+  num_classes: 2
+  weight_dict: {loss_vfl: 2.0, loss_keypoints: 10.0, loss_oks: 4.0}
+  focal_alpha: 0.25
+  losses: ['vfl', 'keypoints']
+  matcher:
+    type: GTRPoseHungarianMatcher
+    cost_class: 2.0
+    cost_keypoints: 10.0
+    cost_oks: 4.0
+    focal_alpha: 0.25
+  num_body_points: 17
+
+GTRPosePostProcessor:
+  num_select: 60
+  num_body_points: 17
+
+train_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: PoseMosaic, output_size: 320}
+        - {type: MixUpCopyPaste, mixup_prob: 0.25, copypaste_prob: 0.75}
+        - {type: PoseRandomZoomOut, p: 0.5}
+        - {type: PoseRandomHorizontalFlip}
+        - {type: PoseColorJitter}
+        - {type: PoseResize, size: [640, 640]}
+        - {type: PoseToTensor}
+        - {type: PoseNormalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
+      policy:
+        name: stop_epoch
+        epoch: [4, 36, 72]
+        ops: ['PoseMosaic', 'MixUpCopyPaste', 'PoseRandomZoomOut']
+      mosaic_prob: 0.5
+
+  collate_fn:
+    type: BatchImageCollateFunction
+    base_size: 640
+    base_size_repeat: ~
+    stop_epoch: 72
+
+  shuffle: True
+  total_batch_size: 32
+  num_workers: 4
+
+val_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: PoseResize, size: [640, 640]}
+        - {type: PoseToTensor}
+        - {type: PoseNormalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
+
+  collate_fn:
+    base_size: 640
+
+  shuffle: False
+  total_batch_size: 64
+  num_workers: 4
+
+print_freq: 200
+output_dir: './logs'
+checkpoint_freq: 12
+val_freq: 1
+
+sync_bn: True
+find_unused_parameters: True
+
+use_amp: False
+
+use_ema: True
+ema:
+  type: ModelEMA
+  decay: 0.9999
+  warmups: 2000
+  start: 0
+
+epochs: 72
+clip_max_norm: 0.1
+
+lr_scheduler:
+  type: MultiStepLR
+  milestones: [5000]
+  gamma: 0.5
+
+lr_warmup_scheduler:
+  type: LinearWarmup
+  warmup_duration: 500

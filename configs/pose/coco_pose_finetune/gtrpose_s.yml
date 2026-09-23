@@ -1,0 +1,49 @@
+__include__: [
+  '../../dataset/coco_pose.yml',
+  '../gtrpose_base.yml',
+]
+
+output_dir: outputs/coco_pose_finetune/gtrpose_s
+
+ViTAdapterSpatialSwiGLU:
+  embed_dim: 192
+  num_heads: 3
+  weights_path: weights/vit_tiny_spatial_swiglu_distilled.pth
+
+GTREncoder:
+  in_channels: [192, 192, 192]
+  hidden_dim: 192
+
+GTRPoseTransformer:
+  hidden_dim: 192
+  dim_feedforward: 512
+  num_decoder_layers: 3
+
+epochs: 92
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*.backbone)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.000025
+    -
+      params: '^(?=.*.backbone)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.000025
+      weight_decay: 0.
+    -
+      params: '^(?!.*\.backbone)(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+
+  lr: 0.0005
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
+
+train_dataloader:
+  dataset:
+    transforms:
+      policy:
+        epoch: [4, 45, 90]
+
+  collate_fn:
+    stop_epoch: 90

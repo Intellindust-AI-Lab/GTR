@@ -1,0 +1,40 @@
+task: obb
+
+evaluator:
+  type: DOTAEvaluator
+  iou_thr: 0.5
+  difficulty: 100
+
+num_classes: 15
+
+train_dataloader:
+  type: DataLoader
+  dataset:
+    type: DOTADetection
+    img_folder: ./dataset/DOTA/split_ss_1024/train/images
+    ann_folder: ./dataset/DOTA/split_ss_1024/train/annfiles
+    filter_empty: True
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: True
+  num_workers: 4
+  drop_last: True
+  collate_fn:
+    type: BatchImageCollateFunction
+
+val_dataloader:
+  type: DataLoader
+  dataset:
+    type: DOTADetection
+    img_folder: ./dataset/DOTA/split_ss_1024/val/images
+    ann_folder: ./dataset/DOTA/split_ss_1024/val/annfiles
+    filter_empty: False
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: False
+  num_workers: 4
+  drop_last: False
+  collate_fn:
+    type: BatchImageCollateFunction

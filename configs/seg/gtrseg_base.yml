@@ -1,0 +1,89 @@
+__include__: [
+  '../det/gtr_base.yml',
+]
+
+task: segmentation
+
+use_amp: False
+val_freq: 1
+
+model: GTRSeg
+
+GTRSeg:
+  backbone: ViTAdapterSpatialSwiGLU
+  encoder: GTREncoder
+  decoder: GTRTransformer
+
+ViTAdapterSpatialSwiGLU:
+  interaction_indexes: [3, 7, 11]
+  multi_layer_same_res: True
+
+GTREncoder:
+  scale_factors: [2.0, 1.0, 0.5]
+  feat_strides: [8, 16, 32]
+  num_blocks: 3
+  layer_norm: True
+  act: silu
+
+GTRTransformer:
+  num_layers: 4
+  eval_idx: -1
+  group_detr: 3
+  mask_downsample_ratio: 4
+
+GTRCriterion:
+  group_detr: 3
+  losses: ['mal', 'boxes', 'local', 'masks']
+  weight_dict: {loss_mal: 2.0, loss_bbox: 1, loss_giou: 1, loss_fgl: 0.15, loss_ddf: 1.5, loss_mask_ce: 5.0, loss_mask_dice: 5.0}
+
+  matcher:
+    type: HungarianMatcher
+    weight_dict: {cost_class: 2, cost_bbox: 1, cost_giou: 1, cost_mask_ce: 5, cost_mask_dice: 5}
+    alpha: 0.25
+    gamma: 2.0
+    mask_point_sample_ratio: 16
+
+optimizer:
+  type: AdamW
+  lr: 0.0005
+  betas: [0.9, 0.999]
+
+epochs: 30
+warmup_iter: 2000
+lr_gamma: 0.5
+
+eval_spatial_size: [640, 640]
+
+train_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: Mosaic, output_size: 320, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+           probability: 1.0, fill_value: 0, use_cache: True, max_cached_images: 50, random_pop: True}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, fill: 0}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: RandomHorizontalFlip}
+        - {type: Resize, size: [640, 640], }
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+
+      policy: stop_epoch
+      start_epoch: 0
+      mosaic_epoch: 6
+      mosaic_prob: 0.5
+      stop_epoch: 28
+      remove_ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
+
+  collate_fn:
+    base_size_repeat: ~
+    mixup_prob: 0.5
+    mixup_epoch: 6
+
+  total_batch_size: 32
+
+val_dataloader:
+  total_batch_size: 64

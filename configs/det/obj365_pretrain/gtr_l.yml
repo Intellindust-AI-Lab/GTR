@@ -1,0 +1,83 @@
+__include__: [
+  '../../dataset/obj365_detection.yml',
+  '../gtr_base.yml',
+]
+
+use_amp: False
+
+output_dir: outputs/obj365_pretrain/gtr_l
+
+GTR:
+  backbone: ViTAdapterSpatialSwiGLU
+  encoder: GTREncoder
+  decoder: GTRTransformer
+
+ViTAdapterSpatialSwiGLU:
+  embed_dim: 384
+  num_heads: 6
+  interaction_indexes: [3, 7, 11]
+  multi_layer_same_res: True
+  weights_path: weights/vit_small_spatial_swiglu_distilled.pth
+
+GTREncoder:
+  in_channels: [384, 384, 384]
+  hidden_dim: 256
+  scale_factors: [2.0, 1.0, 0.5]
+  feat_strides: [8, 16, 32]
+  num_blocks: 3
+  layer_norm: True
+  act: silu
+
+GTRTransformer:
+  feat_channels: [256, 256, 256]
+  hidden_dim: 256
+  dim_feedforward: 1024
+  num_layers: 4
+  eval_idx: -1
+  group_detr: 3
+
+GTRCriterion:
+  group_detr: 3
+  losses: ['mal', 'boxes', 'local']
+  weight_dict: {loss_mal: 1, loss_bbox: 5, loss_giou: 2, loss_fgl: 0.15, loss_ddf: 1.5}
+
+  matcher:
+    type: HungarianMatcher
+    weight_dict: {cost_class: 2, cost_bbox: 5, cost_giou: 2}
+    alpha: 0.25
+    gamma: 2.0
+
+optimizer:
+  type: AdamW
+
+  params:
+    -
+      params: '^(?=.*.backbone)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.00002
+    -
+      params: '^(?=.*.backbone)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.00002
+      weight_decay: 0.
+    -
+      params: '^(?!.*\.backbone)(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+
+  lr: 0.002
+  betas: [0.9, 0.999]
+  weight_decay: 0.000125
+
+epochs: 36
+val_freq: 17
+no_aug_load_best: False
+warmup_iter: 2000
+lr_gamma: 0.1
+
+eval_spatial_size: [640, 640]
+
+train_dataloader:
+  dataset:
+    transforms:
+      stop_epoch: 34
+  collate_fn:
+    stop_epoch: 34
+  total_batch_size: 128

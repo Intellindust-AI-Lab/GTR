@@ -1,0 +1,62 @@
+task: depth
+
+evaluator:
+  type: DepthEvaluator
+  eval_crop: ~
+
+min_depth: 0.001
+max_depth: 100.0
+
+train_dataloader:
+  type: DataLoader
+  dataset:
+    type: UltraDepthLmdb
+    lmdb_paths:
+      - ./dataset/depth/lmdb/sunrgbd.lmdb
+      - ./dataset/depth/lmdb/diode.lmdb
+      - ./dataset/depth/lmdb/vkitti2.lmdb
+      - ./dataset/depth/lmdb/kitti.lmdb
+      - ./dataset/depth/lmdb/hypersim.lmdb
+      - ./dataset/depth/lmdb/tartanair.lmdb
+      - ./dataset/depth/lmdb/arkit.lmdb
+      - ./dataset/depth/lmdb/imagenet_pseudo/imagenet_pseudo.rank0.lmdb
+      - ./dataset/depth/lmdb/imagenet_pseudo/imagenet_pseudo.rank1.lmdb
+      - ./dataset/depth/lmdb/imagenet_pseudo/imagenet_pseudo.rank2.lmdb
+      - ./dataset/depth/lmdb/imagenet_pseudo/imagenet_pseudo.rank3.lmdb
+      - ./dataset/depth/lmdb/imagenet_pseudo/imagenet_pseudo.rank4.lmdb
+      - ./dataset/depth/lmdb/imagenet_pseudo/imagenet_pseudo.rank5.lmdb
+      - ./dataset/depth/lmdb/imagenet_pseudo/imagenet_pseudo.rank6.lmdb
+      - ./dataset/depth/lmdb/imagenet_pseudo/imagenet_pseudo.rank7.lmdb
+    repeats: [6, 3, 2, 2, 2, 1, 3, 1, 1, 1, 1, 1, 1, 1, 1]
+    split: train
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: True
+  num_workers: 8
+  drop_last: True
+  epoch_chunks: 6
+  collate_fn:
+    type: BatchImageCollateFunction
+
+val_dataloader:
+  type: DataLoader
+  dataset:
+    type: UltraDepthLmdb
+    lmdb_paths:
+      - ./dataset/depth/lmdb/sunrgbd.lmdb
+      - ./dataset/depth/lmdb/diode.lmdb
+      - ./dataset/depth/lmdb/vkitti2.lmdb
+      - ./dataset/depth/lmdb/kitti.lmdb
+      - ./dataset/depth/lmdb/hypersim.lmdb
+      - ./dataset/depth/lmdb/tartanair.lmdb
+      - ./dataset/depth/lmdb/arkit.lmdb
+    split: val
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: False
+  num_workers: 8
+  drop_last: False
+  collate_fn:
+    type: BatchImageCollateFunction

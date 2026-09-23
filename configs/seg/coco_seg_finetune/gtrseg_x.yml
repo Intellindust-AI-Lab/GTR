@@ -1,0 +1,36 @@
+__include__: [
+  '../../dataset/coco_instance.yml',
+  '../gtrseg_base.yml',
+]
+
+output_dir: outputs/coco_seg_finetune/gtrseg_x
+
+ViTAdapterSpatialSwiGLU:
+  embed_dim: 384
+  num_heads: 6
+  ffn_ratio: 6
+  weights_path: weights/vit_smallplus_spatial_swiglu_distilled.pth
+
+GTREncoder:
+  in_channels: [384, 384, 384]
+  hidden_dim: 256
+
+GTRTransformer:
+  feat_channels: [256, 256, 256]
+  hidden_dim: 256
+  dim_feedforward: 2048
+
+optimizer:
+  params:
+    -
+      params: '^(?=.*.backbone)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.0000025
+    -
+      params: '^(?=.*.backbone)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.0000025
+      weight_decay: 0.
+    -
+      params: '^(?!.*\.backbone)(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+
+  weight_decay: 0.000125

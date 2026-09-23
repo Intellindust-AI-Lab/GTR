@@ -1,0 +1,31 @@
+__include__: [
+  './gtrdepth_base.yml',
+]
+
+DPTDepthHead:
+  log_depth: True
+
+val_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: Resize, size: [640, 640]}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
+      policy: default
+  total_batch_size: 64
+
+epochs: 180
+flat_epoch: 72
+warmup_iter: 2000
+
+val_freq: 6
+checkpoint_freq: 6
+
+no_aug_load_best: False
+
+train_dataloader:
+  total_batch_size: 256
+  dataset:
+    transforms:
+      stop_epoch: 162

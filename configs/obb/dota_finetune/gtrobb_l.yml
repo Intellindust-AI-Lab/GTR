@@ -1,0 +1,37 @@
+__include__: [
+  '../../dataset/dota_detection.yml',
+  '../gtrobb_base.yml',
+]
+
+output_dir: outputs/dota_finetune/gtrobb_l
+
+ViTAdapter:
+  embed_dim: 384
+  num_heads: 6
+  weights_path: weights/vit_small_distilled.pth
+
+GTREncoder:
+  in_channels: [384, 384, 384]
+  hidden_dim: 256
+
+OBBGTRTransformer:
+  feat_channels: [256, 256, 256]
+  hidden_dim: 256
+  dim_feedforward: 1024
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*.backbone)(?!.*(?:norm|bn|bias)).*$'
+      lr: 0.0000025
+    -
+      params: '^(?=.*.backbone)(?=.*(?:norm|bn|bias)).*$'
+      lr: 0.0000025
+      weight_decay: 0.
+    -
+      params: '^(?!.*\.backbone)(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+  lr: 0.0005
+  betas: [0.9, 0.999]
+  weight_decay: 0.000125

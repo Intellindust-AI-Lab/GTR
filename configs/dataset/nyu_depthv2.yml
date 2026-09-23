@@ -1,0 +1,40 @@
+task: depth
+
+evaluator:
+  type: DepthEvaluator
+  eval_crop: eigen
+
+min_depth: 0.001
+max_depth: 10.0
+
+train_dataloader:
+  type: DataLoader
+  dataset:
+    type: NYUDepthV2
+    mat_file: ./dataset/nyu/nyu_depth_v2_labeled.mat
+    splits_file: ./dataset/nyu/splits.mat
+    split: train
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: True
+  num_workers: 4
+  drop_last: True
+  collate_fn:
+    type: BatchImageCollateFunction
+
+val_dataloader:
+  type: DataLoader
+  dataset:
+    type: NYUDepthV2
+    mat_file: ./dataset/nyu/nyu_depth_v2_labeled.mat
+    splits_file: ./dataset/nyu/splits.mat
+    split: test
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: False
+  num_workers: 4
+  drop_last: False
+  collate_fn:
+    type: BatchImageCollateFunction

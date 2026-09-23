@@ -1,0 +1,20 @@
+__include__: [
+  '../../dataset/dota_detection.yml',
+  '../gtrobb_base.yml',
+]
+
+output_dir: outputs/dota_finetune/gtrobb_m
+
+ViTAdapter:
+  embed_dim: 256
+  num_heads: 4
+  weights_path: weights/vit_tinyplus_distilled.pth
+
+GTREncoder:
+  in_channels: [256, 256, 256]
+  hidden_dim: 256
+
+OBBGTRTransformer:
+  feat_channels: [256, 256, 256]
+  hidden_dim: 256
+  dim_feedforward: 1024

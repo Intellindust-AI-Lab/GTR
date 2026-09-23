@@ -1,0 +1,81 @@
+__include__: [
+  '../det/gtr_base.yml',
+]
+
+task: semantic_segmentation
+
+use_amp: False
+val_freq: 1
+
+model: GTRSemSeg
+criterion: SemSegCriterion
+postprocessor: SemSegPostProcessor
+
+GTRSemSeg:
+  backbone: ViTAdapterSpatialSwiGLU
+  encoder: GTREncoder
+  head: SemSegHead
+
+ViTAdapterSpatialSwiGLU:
+  interaction_indexes: [3, 7, 11]
+  multi_layer_same_res: True
+
+GTREncoder:
+  scale_factors: [2.0]
+  feat_strides: [8]
+  num_blocks: 3
+  layer_norm: True
+  act: silu
+
+SemSegHead:
+  num_classes: 19
+  dropout: 0.1
+
+SemSegCriterion:
+  losses: ['ce']
+  weight_dict: {loss_ce: 1.0}
+  ignore_index: 255
+
+optimizer:
+  type: AdamW
+  lr: 0.0005
+  betas: [0.9, 0.999]
+
+epochs: 30
+warmup_iter: 2000
+lr_gamma: 0.5
+
+eval_spatial_size: [1024, 1024]
+
+slide_stride: [768, 768]
+
+train_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: LargeScaleJitter, output_size: 1024, min_scale: 1.0, max_scale: 4.0, fill: 0, mask_fill: 255, cat_max_ratio: 0.75}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomHorizontalFlip}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
+
+      policy: stop_epoch
+      start_epoch: 0
+      mosaic_epoch: 6
+      mosaic_prob: 0
+      stop_epoch: 30
+      remove_ops: ['RandomPhotometricDistort']
+
+  collate_fn:
+    type: SemSegCollateFunction
+
+  total_batch_size: 8
+
+val_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: Normalize, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]}
+      policy: default
+  total_batch_size: 16
