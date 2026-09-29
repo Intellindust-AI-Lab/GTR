@@ -161,6 +161,8 @@ full protocol).
 
 <details>
 <summary><b>Monocular depth estimation</b> — NYU Depth V2, Eigen test split</summary>
+    
+> 🔴 **GTR performs metric depth estimation and directly predicts depth in meters.**
 
 Six test-time views and a per-image log-affine fit to ground truth, no NYU fine-tuning
 (`tools/eval_nyu_depth.py`).
@@ -171,6 +173,7 @@ Six test-time views and a per-image log-affine fit to ground truth, no NYU fine-
 | GTR-M | 19.4 | 93.2 | 1.508 | 0.952 | 0.069 | 0.319 | [yml](configs/depth/pretrain/gtrdepth_m.yml) | [gtrdepth_m.pth](https://huggingface.co/Phoenix8125/GTR/resolve/main/depth/gtrdepth_m.pth) |
 | GTR-L | 33.9 | 136.6 | 1.948 | 0.951 | 0.069 | 0.328 | [yml](configs/depth/pretrain/gtrdepth_l.yml) | [gtrdepth_l.pth](https://huggingface.co/Phoenix8125/GTR/resolve/main/depth/gtrdepth_l.pth) |
 | GTR-X | 41.1 | 159.4 | 2.158 | 0.954 | 0.067 | 0.317 | [yml](configs/depth/pretrain/gtrdepth_x.yml) | [gtrdepth_x.pth](https://huggingface.co/Phoenix8125/GTR/resolve/main/depth/gtrdepth_x.pth) |
+
 
 </details>
 
