@@ -25,6 +25,20 @@
 GTR models deliver strong dense predictions across segmentation, pose, depth, and detection, while scaling efficiently to high-resolution inputs.
 </div>
 
+<div align="center">
+<img src="assets/demo_multitask.gif" width="100%" />
+
+One GTR backbone, five dense prediction tasks on the same driving clip: object detection, instance
+segmentation, pose estimation, semantic segmentation and metric depth.
+</div>
+
+<div align="center">
+<img src="assets/demo_depth3d_driving.gif" height="250" /> <img src="assets/demo_depth3d_indoor.gif" height="250" />
+
+Metric depth predicted by GTR, unprojected into a 3D point cloud: an outdoor driving scene (left) and
+an indoor scene (right).
+</div>
+
 ## 🔥 Changelog
 
 
