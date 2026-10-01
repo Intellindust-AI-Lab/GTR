@@ -33,7 +33,7 @@ segmentation, pose estimation, semantic segmentation and metric depth.
 </div>
 
 <div align="center">
-<img src="assets/demo_depth3d_driving.gif" height="250" /> <img src="assets/demo_depth3d_indoor.gif" height="250" />
+<img src="assets/demo_depth3d_driving.gif" height="240" /> <img src="assets/demo_depth3d_indoor.gif" height="240" />
 
 Metric depth predicted by GTR, unprojected into a 3D point cloud: an outdoor driving scene (left) and
 an indoor scene (right).
