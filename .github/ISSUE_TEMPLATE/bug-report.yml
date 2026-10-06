@@ -1,0 +1,100 @@
+name: 🐛 Bug Report
+description: Problems with GTR
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for submitting a GTR 🐛 Bug Report!
+
+  - type: checkboxes
+    attributes:
+      label: Search before asking
+      description: >
+        Please search the [README](https://github.com/Intellindust-AI-Lab/GTR#readme) and [issues](https://github.com/Intellindust-AI-Lab/GTR/issues) to see if a similar bug report already exists.
+      options:
+        - label: >
+            I have searched the GTR issues and found no similar bug report.
+          required: true
+
+  - type: dropdown
+    attributes:
+      label: Area
+      description: Which task or component is affected? Select all that apply.
+      multiple: true
+      options:
+        - Installation
+        - Object detection
+        - Instance segmentation
+        - Pose estimation
+        - Semantic segmentation
+        - Monocular depth estimation
+        - Oriented object detection
+        - Backbone / CUDA GLA operator
+        - TensorRT deployment
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Bug
+      description: >
+        Please provide as much information as possible. Include full console output and error messages (including any traceback). For an accuracy or latency gap, include the numbers you got and the README numbers you compared against. Use Markdown to format text, code, and logs.
+      placeholder: |
+        Include logs, tracebacks, screenshots, or any other relevant info to help us quickly diagnose and solve your problem.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Environment
+      description: |
+        Try the latest `main` before reporting a bug. If the issue persists, please provide details about your setup:
+        - GTR commit (`git rev-parse --short HEAD`)
+        - OS
+        - Python version
+        - PyTorch version and CUDA toolkit version (`nvcc --version`)
+        - flash-linear-attention version
+        - CUDA GLA extension: built with `engine/gtr/backbone/csrc/build.sh`, not built, or disabled with `GTR_DISABLE_CUDA_GLA=1`
+        - GPU model and count
+        - TensorRT version (deployment issues only)
+      placeholder: |
+        Example:
+        - GTR: a1b2c3d
+        - OS: Ubuntu 22.04
+        - Python: 3.11
+        - PyTorch: 2.11.0+cu128, CUDA toolkit: 12.8
+        - flash-linear-attention: 0.5.0
+        - CUDA GLA extension: built
+        - GPU: 8x NVIDIA RTX 4090
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Minimal Reproducible Example
+      description: >
+        The exact command you ran, with its config and checkpoint, plus any changes you made to the code or configs. Keep it as minimal and self-contained as possible.
+      placeholder: |
+        ```bash
+        python train.py -c configs/det/coco_finetune/gtr_s.yml --test-only -r weights/det/gtr_s_coco.pth
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Additional
+      description: |
+        Anything else you would like to share? (Optional)
+      placeholder: |
+        Additional context, suggestions, or observations.
+
+  - type: checkboxes
+    attributes:
+      label: Are you willing to submit a PR?
+      description: >
+        (Optional) We encourage you to submit a [Pull Request](https://github.com/Intellindust-AI-Lab/GTR/pulls) (PR) to help improve GTR, especially if you already have a fix in mind.
+      options:
+        - label: Yes, I'd like to help by submitting a PR!
