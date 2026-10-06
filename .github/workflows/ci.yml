@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'assets/**']
+  pull_request:
+    branches: [main]
+    paths-ignore: ['**.md', 'assets/**']
+  schedule:
+    # Weekly: most of requirements.txt is unpinned, so an upstream release can break
+    # `import engine` without any change in this repo.
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check-checkpoints:
+    name: Check configs and checkpoints
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies (CPU-only PyTorch)
+        # The CPU builds of the pinned torch/torchvision satisfy the pins in requirements.txt, so
+        # pip keeps them. They do not pull in triton, which flash-linear-attention imports; install
+        # the version torch 2.11.0 pins on Linux.
+        run: |
+          pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install triton==3.6.0 -r requirements.txt
+
+      - name: Check configs and checkpoints
+        # Pull requests check the GTR-S checkpoints (~0.6 GB); everything else checks all of them (~5.8 GB).
+        run: python tools/check_checkpoints.py ${{ github.event_name != 'pull_request' && '--all' || '' }}
