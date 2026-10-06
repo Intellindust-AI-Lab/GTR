@@ -4,6 +4,8 @@
 
 <a href="https://arxiv.org/pdf/2609.26590"><img src="https://img.shields.io/badge/arXiv-Paper-b31b1b"></a>
 <a href="https://intellindust-ai-lab.github.io/projects/GTR/"><img src="https://img.shields.io/badge/Project-Page-blue"></a>
+<a href="https://x.com/phoenix8215_/status/2103070664433471975"><img src="https://img.shields.io/badge/X-Post-000000?logo=x&logoColor=white"></a>
+<a href="https://www.reddit.com/r/computervision/comments/1wwptmx/gtrdepth_metric_depth_from_a_single_camera_at_27/"><img src="https://img.shields.io/badge/Reddit-Post-FF4500?logo=reddit&logoColor=white"></a>
 
 [Zhe Feng](https://fengzheai.com/)<sup>1,2,3</sup>, [Longfei Liu](https://capsule2077.github.io/)<sup>2</sup>, Wei Liu<sup>1</sup>, Kai Chen<sup>5</sup>, Jiangang Kong<sup>1</sup>, Wei Zhou<sup>1</sup>, Yifeng Qian<sup>5</sup>, [Dexiong Chen](https://dexiong.me/)<sup>4</sup>, [Xuanlong Yu](https://xuanlong-yu.github.io/)<sup>2</sup>, [Xi Shen](https://xishen0220.github.io/)<sup>2 :email:</sup>
 
