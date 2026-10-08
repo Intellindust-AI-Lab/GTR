@@ -3,6 +3,7 @@
 <h3>Gated Token Recurrence for Efficient Dense Prediction</h3>
 
 <a href="https://arxiv.org/pdf/2609.26590"><img src="https://img.shields.io/badge/arXiv-Paper-b31b1b"></a>
+<a href="https://huggingface.co/papers/2609.26590"><img src="https://img.shields.io/badge/Hugging%20Face-Paper-FFD21E?logo=huggingface&logoColor=FFD21E"></a>
 <a href="https://intellindust-ai-lab.github.io/projects/GTR/"><img src="https://img.shields.io/badge/Project-Page-blue"></a>
 <a href="https://x.com/phoenix8215_/status/2103070664433471975"><img src="https://img.shields.io/badge/X-Post-000000?logo=x&logoColor=white"></a>
 <a href="https://www.reddit.com/r/computervision/comments/1wwptmx/gtrdepth_metric_depth_from_a_single_camera_at_27/"><img src="https://img.shields.io/badge/Reddit-Post-FF4500?logo=reddit&logoColor=white"></a>
@@ -43,6 +44,7 @@ an indoor scene (right).
 
 ## 🔥 Changelog
 
+- **[2026-09-27]** 🥳 GTR has been integrated into [LibreYOLO](https://www.libreyolo.com/docs/models/gtr).
 
 ## 📚 Table of Contents
 
