@@ -50,6 +50,11 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
     rank = dist_utils.get_rank()
     output_dir = kwargs.get('output_dir', None)
     torch_profiler = _maybe_create_torch_profiler(output_dir, rank)
+    record_function = torch.profiler.record_function if torch_profiler is not None else nullcontext
+    if profile_times and os.getenv('GTR_TORCH_PROFILER', '0') == '1':
+        profile_times = False
+        if dist_utils.is_main_process():
+            print('[train-infra] disabled GTR_PROFILE_TIMES while torch profiler is enabled', flush=True)
     amp_dtype = _get_amp_dtype(device)
     amp_safe_mode = os.getenv('GTR_AMP_SAFE_MODE', 'full' if scaler is not None else 'off')
     use_amp = scaler is not None
@@ -82,6 +87,7 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
             f'fast_l1_cost={os.getenv("GTR_FAST_L1_COST", "1")} '
             f'elementwise_box_iou={os.getenv("GTR_ELEMENTWISE_BOX_IOU", "1")} '
             f'fast_go_indices={os.getenv("GTR_FAST_GO_INDICES", "1")} '
+            f'cache_match_indices={int(os.getenv("GTR_CACHE_MATCH_INDICES", "0"))} '
             f'gpu_lsap={os.getenv("GTR_GPU_LSAP", "0")} '
             f'sync_free_ddf={os.getenv("GTR_SYNC_FREE_DDF", "1")} '
             f'tensor_loss_norm={os.getenv("GTR_TENSOR_LOSS_NORM", "1")} '
@@ -137,6 +143,7 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
                 reduce_loss_every,
                 zero_grad_set_to_none,
                 grad_accum_steps,
+                record_function=record_function,
             )
             if torch_profiler is not None:
                 torch_profiler.step()
@@ -197,6 +204,27 @@ def _maybe_create_torch_profiler(output_dir, rank: int):
             flush=True,
         )
 
+    with_stack = os.getenv('GTR_TORCH_PROFILE_STACK', '0') == '1'
+    chrome_handler = torch.profiler.tensorboard_trace_handler(str(trace_root), worker_name=f'rank{rank}')
+
+    def export_trace(profiler):
+        try:
+            chrome_handler(profiler)
+        except Exception as error:
+            print(f'[torch-profiler] Chrome export failed: {error}', flush=True)
+        if with_stack:
+            metrics = [('cpu', 'self_cpu_time_total')]
+            if torch.cuda.is_available():
+                metrics.append(('cuda', 'self_cuda_time_total'))
+            for label, metric in metrics:
+                try:
+                    path = trace_root / f'rank{rank}.step{profiler.step_num}.{label}.stacks'
+                    profiler.export_stacks(str(path), metric)
+                    if path.stat().st_size == 0:
+                        print(f'[torch-profiler] Empty {label} stacks: {path}', flush=True)
+                except Exception as error:
+                    print(f'[torch-profiler] {label} stack export failed: {error}', flush=True)
+
     return torch.profiler.profile(
         activities=activities,
         schedule=torch.profiler.schedule(
@@ -205,13 +233,11 @@ def _maybe_create_torch_profiler(output_dir, rank: int):
             active=active,
             repeat=repeat,
         ),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler(
-            str(trace_root),
-            worker_name=f'rank{rank}',
-        ),
+        on_trace_ready=export_trace,
         record_shapes=os.getenv('GTR_TORCH_PROFILE_SHAPES', '0') == '1',
         profile_memory=os.getenv('GTR_TORCH_PROFILE_MEMORY', '1') == '1',
-        with_stack=os.getenv('GTR_TORCH_PROFILE_STACK', '0') == '1',
+        with_stack=with_stack,
+        experimental_config=torch._C._profiler._ExperimentalConfig(verbose=True) if with_stack else None,
     )
 
 
@@ -335,6 +361,7 @@ def _train_step(
     reduce_loss_every,
     zero_grad_set_to_none,
     grad_accum_steps,
+    record_function=nullcontext,
 ):
     iter_start = time.time()
     accum_group_start = (i // grad_accum_steps) * grad_accum_steps
@@ -348,7 +375,7 @@ def _train_step(
         if hasattr(model, 'no_sync') and not is_accum_end
         else nullcontext()
     )
-    with torch.profiler.record_function('gtr/h2d_batch'):
+    with record_function('gtr/h2d_batch'):
         samples = samples.to(device, non_blocking=True)
         targets = [{k: v.to(device, non_blocking=True) for k, v in t.items()} for t in targets]
     global_step = cur_iters + update_step
@@ -357,7 +384,7 @@ def _train_step(
     if mem_diag_every > 0 and (i % mem_diag_every == 0 or i == len(data_loader) - 1):
         _log_batch_memory_diag(samples, targets, epoch, i, global_step, 'sample')
     if is_accum_start:
-        with torch.profiler.record_function('gtr/zero_grad'):
+        with record_function('gtr/zero_grad'):
             optimizer.zero_grad(set_to_none=zero_grad_set_to_none)
         # Set this update's LR BEFORE optimizer.step(). FlatCosineLRScheduler is STATELESS
         # -- it writes param_groups[i]['lr'] from the iteration handed to it -- so PyTorch's
@@ -367,7 +394,7 @@ def _train_step(
         # happened yet. It also made resume differ from uninterrupted training, since
         # det_solver pre-seeds f(start_iter) on resume only.
         if self_lr_scheduler:
-            with torch.profiler.record_function('gtr/lr_scheduler'):
+            with record_function('gtr/lr_scheduler'):
                 optimizer = lr_scheduler.step(global_step, optimizer)
 
     if scaler is not None:
@@ -375,7 +402,7 @@ def _train_step(
             torch.cuda.synchronize()
         t0 = time.time()
         with sync_context:
-            with torch.profiler.record_function('gtr/forward'), torch.autocast(
+            with record_function('gtr/forward'), torch.autocast(
                 device_type=str(device),
                 dtype=amp_dtype,
                 cache_enabled=True,
@@ -385,7 +412,7 @@ def _train_step(
                 torch.cuda.synchronize()
             t1 = time.time()
 
-            with torch.profiler.record_function('gtr/nan_check'):
+            with record_function('gtr/nan_check'):
                 # pose models predict keypoints instead of boxes; depth models predict dense maps
                 if 'pred_boxes' in outputs:
                     pred_reg = outputs['pred_boxes']
@@ -403,7 +430,7 @@ def _train_step(
                     new_state['model'] = state
                     dist_utils.save_on_master(new_state, "./NaN.pth")
 
-            with torch.profiler.record_function('gtr/criterion'), torch.autocast(device_type=str(device), enabled=False):
+            with record_function('gtr/criterion'), torch.autocast(device_type=str(device), enabled=False):
                 loss_dict = criterion(_float_outputs_for_loss(outputs), targets, **metas)
             if profile_times and torch.cuda.is_available():
                 torch.cuda.synchronize()
@@ -412,7 +439,7 @@ def _train_step(
             loss = sum(loss_dict.values())
             backward_loss = loss / accum_denom
             if use_grad_scaler:
-                with torch.profiler.record_function('gtr/backward'):
+                with record_function('gtr/backward'):
                     try:
                         scaler.scale(backward_loss).backward()
                     except Exception as error:
@@ -422,15 +449,15 @@ def _train_step(
 
                 if is_accum_end:
                     if max_norm > 0:
-                        with torch.profiler.record_function('gtr/grad_clip'):
+                        with record_function('gtr/grad_clip'):
                             scaler.unscale_(optimizer)
                             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm, foreach=True)
 
-                    with torch.profiler.record_function('gtr/optimizer_step'):
+                    with record_function('gtr/optimizer_step'):
                         scaler.step(optimizer)
                         scaler.update()
             else:
-                with torch.profiler.record_function('gtr/backward'):
+                with record_function('gtr/backward'):
                     try:
                         backward_loss.backward()
                     except Exception as error:
@@ -440,10 +467,10 @@ def _train_step(
 
                 if is_accum_end:
                     if max_norm > 0:
-                        with torch.profiler.record_function('gtr/grad_clip'):
+                        with record_function('gtr/grad_clip'):
                             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm, foreach=True)
 
-                    with torch.profiler.record_function('gtr/optimizer_step'):
+                    with record_function('gtr/optimizer_step'):
                         optimizer.step()
         if profile_times and torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -454,12 +481,12 @@ def _train_step(
             torch.cuda.synchronize()
         t0 = time.time()
         with sync_context:
-            with torch.profiler.record_function('gtr/forward'):
+            with record_function('gtr/forward'):
                 outputs = model(samples, targets=targets)
             if profile_times and torch.cuda.is_available():
                 torch.cuda.synchronize()
             t1 = time.time()
-            with torch.profiler.record_function('gtr/criterion'):
+            with record_function('gtr/criterion'):
                 loss_dict = criterion(outputs, targets, **metas)
             if profile_times and torch.cuda.is_available():
                 torch.cuda.synchronize()
@@ -467,7 +494,7 @@ def _train_step(
 
             loss: torch.Tensor = sum(loss_dict.values())
             backward_loss = loss / accum_denom
-            with torch.profiler.record_function('gtr/backward'):
+            with record_function('gtr/backward'):
                 try:
                     backward_loss.backward()
                 except Exception as error:
@@ -477,17 +504,17 @@ def _train_step(
 
             if is_accum_end:
                 if max_norm > 0:
-                    with torch.profiler.record_function('gtr/grad_clip'):
+                    with record_function('gtr/grad_clip'):
                         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm, foreach=True)
 
-                with torch.profiler.record_function('gtr/optimizer_step'):
+                with record_function('gtr/optimizer_step'):
                     optimizer.step()
         if profile_times and torch.cuda.is_available():
             torch.cuda.synchronize()
         t3 = time.time()
 
     if ema is not None and is_accum_end:
-        with torch.profiler.record_function('gtr/ema_update'):
+        with record_function('gtr/ema_update'):
             ema.update(model)
 
     if is_accum_end:
@@ -495,7 +522,7 @@ def _train_step(
         # above). lr_warmup_scheduler is a stateful torch scheduler, so it keeps the
         # step-after-the-optimizer convention it was written for.
         if not self_lr_scheduler and lr_warmup_scheduler is not None:
-            with torch.profiler.record_function('gtr/lr_scheduler'):
+            with record_function('gtr/lr_scheduler'):
                 lr_warmup_scheduler.step()
 
     detailed_loss_log = (
@@ -504,7 +531,7 @@ def _train_step(
         or i % print_freq == 0
         or i == len(data_loader) - 1
     )
-    with torch.profiler.record_function('gtr/loss_reduce_logging'):
+    with record_function('gtr/loss_reduce_logging'):
         if detailed_loss_log:
             loss_dict_reduced = dist_utils.reduce_dict(loss_dict)
             loss_value = sum(loss_dict_reduced.values())
@@ -538,7 +565,7 @@ def _train_step(
         )
 
     if writer and dist_utils.is_main_process() and global_step % 10 == 0:
-        with torch.profiler.record_function('gtr/tensorboard_write'):
+        with record_function('gtr/tensorboard_write'):
             writer.add_scalar('Loss/total', loss_value.item(), global_step)
             writer.add_scalar('Perf/img_s', global_img_s, global_step)
             if flops_per_image > 0:

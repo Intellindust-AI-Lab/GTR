@@ -71,6 +71,7 @@ class GTRCriterion(nn.Module):
         # Prefer matcher's setting if it has one, else fall back to ctor arg.
         self.mask_point_sample_ratio = getattr(matcher, 'mask_point_sample_ratio', None) or mask_point_sample_ratio
         self._loss_meta_cache = {}
+        self._src_index_cache = {}
 
     def loss_labels_focal(self, outputs, targets, indices, num_boxes):
         assert 'pred_logits' in outputs
@@ -321,9 +322,22 @@ class GTRCriterion(nn.Module):
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
+        cache_indices = int(os.getenv('GTR_CACHE_MATCH_INDICES', '0'))
+        if cache_indices and id(indices) in self._src_index_cache:
+            return self._src_index_cache[id(indices)][1]
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
         src_idx = torch.cat([src for (src, _) in indices])
+        if cache_indices:
+            self._src_index_cache[id(indices)] = (indices, (batch_idx, src_idx))
         return batch_idx, src_idx
+
+    @staticmethod
+    def _indices_to_device(indices, device):
+        tensors = [index for pair in indices for index in pair]
+        sizes = [index.numel() for index in tensors]
+        packed = torch.cat(tensors).to(device, non_blocking=True)
+        parts = packed.split(sizes)
+        return list(zip(parts[0::2], parts[1::2]))
 
     def _get_tgt_permutation_idx(self, indices):
         # permute targets following indices
@@ -397,6 +411,7 @@ class GTRCriterion(nn.Module):
         self.own_targets, self.own_targets_dn = None, None
         self.num_pos, self.num_neg = None, None
         self._loss_meta_cache = {}
+        self._src_index_cache = {}
 
     def get_loss(self, loss, outputs, targets, indices, num_boxes, **kwargs):
         loss_map = {
@@ -456,6 +471,13 @@ class GTRCriterion(nn.Module):
                 num_boxes_go = torch.clamp(num_boxes_go / get_world_size(), min=1).item()
         else:
             assert 'aux_outputs' in outputs, ''
+
+        if int(os.getenv('GTR_CACHE_MATCH_INDICES', '0')):
+            device = outputs['pred_logits'].device
+            indices = self._indices_to_device(indices, device)
+            indices_go = self._indices_to_device(indices_go, device)
+            cached_indices = [self._indices_to_device(x, device) for x in cached_indices]
+            cached_indices_enc = [self._indices_to_device(x, device) for x in cached_indices_enc]
 
         # Compute the average number of target boxes accross all nodes, for normalization purposes.
         # Scale by group_detr so each group contributes equally (matches RF-DETR's criterion).

@@ -44,7 +44,8 @@ an indoor scene (right).
 
 ## 🔥 Changelog
 
-- **[2026-09-27]** 🥳 GTR has been integrated into [LibreYOLO](https://www.libreyolo.com/docs/models/gtr).
+- **[2026-10-15]** 🚀 Optimized training infrastructure with batched matching-index transfers and caching, reducing CPU–GPU synchronization.
+- **[2026-09-27]** 🥳 Thanks to [Xuban Ceccon (@EHxuban11)](https://github.com/EHxuban11) for integrating GTR into [LibreYOLO](https://www.libreyolo.com/docs/models/gtr)!
 
 ## 📚 Table of Contents
 
