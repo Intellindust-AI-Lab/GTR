@@ -44,7 +44,7 @@ an indoor scene (right).
 </div>
 
 ## 🔥 Changelog
-
+- **[2026-11-12]** 🙏 Thanks to [@jsshin-hamsterlab](https://github.com/jsshin-hamsterlab) for reporting NaN outputs during FP16 inference with the released checkpoints and sharing a minimal reproduction in [#3](https://github.com/Intellindust-AI-Lab/GTR/issues/3)! We’ve fixed the underlying numerical overflow in the fused CUDA GLA kernel.
 - **[2026-10-15]** 🚀 Optimized training infrastructure with batched matching-index transfers and caching, reducing CPU–GPU synchronization.
 - **[2026-09-27]** 🥳 Thanks to [Xuban Ceccon (@EHxuban11)](https://github.com/EHxuban11) for integrating GTR into [LibreYOLO](https://www.libreyolo.com/docs/models/gtr)!
 
