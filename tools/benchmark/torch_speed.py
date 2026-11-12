@@ -32,7 +32,7 @@ def build_model(config_path: str, deploy: bool = True):
     for _bb in ('ViTAdapter', 'ViTAdapterSpatialSwiGLU'):
         if _bb in cfg.yaml_cfg:
             cfg.yaml_cfg[_bb]['skip_weights_warning'] = True
-        cfg.yaml_cfg['ViTAdapter']['weights_path'] = None
+            cfg.yaml_cfg[_bb]['weights_path'] = None
 
     model = cfg.model
     model.eval()

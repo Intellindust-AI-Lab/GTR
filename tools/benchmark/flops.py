@@ -26,11 +26,10 @@ from engine.core import YAMLConfig
 
 def build(config_path):
     cfg = YAMLConfig(config_path)
-    # Both backbone flavours: plain ViTAdapter and the Spatial SwiGLU variant.
     for _bb in ('ViTAdapter', 'ViTAdapterSpatialSwiGLU'):
         if _bb in cfg.yaml_cfg:
             cfg.yaml_cfg[_bb]['skip_weights_warning'] = True
-        cfg.yaml_cfg['ViTAdapter']['weights_path'] = None
+            cfg.yaml_cfg[_bb]['weights_path'] = None
     model = cfg.model
     model.eval()
     eval_size = cfg.yaml_cfg.get('eval_spatial_size', [640, 640])

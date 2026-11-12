@@ -164,12 +164,174 @@ __device__ __forceinline__ float logsigmoid_f(float x) {
                     : x - log1pf(__expf(x));
 }
 
+
+constexpr float kMaxGrowth = 70.f;
+
+__device__ __forceinline__ int qv_row(int J, int r) {
+    return (J - 1) * (72 - 8 * J) + r - (16 * J - 8);
+}
+
+__device__ __forceinline__ void st_bf16x8(__nv_bfloat16* dst, const float* x) {
+    __nv_bfloat162 b[4];
+#pragma unroll
+    for (int p = 0; p < 4; ++p) b[p] = __floats2bfloat162_rn(x[2 * p], x[2 * p + 1]);
+    *reinterpret_cast<uint2*>(dst)     = *reinterpret_cast<const uint2*>(&b[0]);
+    *reinterpret_cast<uint2*>(dst + 4) = *reinterpret_cast<const uint2*>(&b[2]);
+}
+
+
+template <typename Row>
+__device__ __forceinline__ bool load_qk_chunk(
+    Row* sQt, Row* sKt, Row* sQv, float (*sDecay)[kK],
+    const __half* __restrict__ q, const __half* __restrict__ k, const float* __restrict__ G,
+    int tid, int t_base, int T, int base_k, int stride_t_k) {
+    auto ref_row = [&](int m) { return min(t_base + 16 * m - 1, T - 1); };
+
+    const int m = tid >> 5;
+    const size_t col = (size_t)base_k + (tid & 31);
+    const float a_lo = m == 0 ? 0.f : G[col + (size_t)ref_row(m) * stride_t_k];
+    const float a_hi = G[col + (size_t)ref_row(m + 1) * stride_t_k];
+    uint4 qv8[2], kv8[2];
+    float4 gv[2][2], av[2][2];
+#pragma unroll
+    for (int it = 0; it < 2; ++it) {
+        const int r  = (tid + 128 * it) >> 2;
+        const int c8 = (tid & 3) * 8;
+        const int t  = t_base + r;
+        const int J  = (r + 8) >> 4;
+        qv8[it] = kv8[it] = make_uint4(0, 0, 0, 0);
+        gv[it][0] = gv[it][1] = av[it][0] = av[it][1] = make_float4(0.f, 0.f, 0.f, 0.f);
+        if (t < T) {
+            const size_t off = (size_t)base_k + (size_t)t * stride_t_k + c8;
+            qv8[it] = *reinterpret_cast<const uint4*>(q + off);
+            kv8[it] = *reinterpret_cast<const uint4*>(k + off);
+            gv[it][0] = *reinterpret_cast<const float4*>(G + off);
+            gv[it][1] = *reinterpret_cast<const float4*>(G + off + 4);
+            if (J > 0) {
+                const size_t ref = (size_t)base_k + (size_t)ref_row(J) * stride_t_k + c8;
+                av[it][0] = *reinterpret_cast<const float4*>(G + ref);
+                av[it][1] = *reinterpret_cast<const float4*>(G + ref + 4);
+            }
+        }
+    }
+    sDecay[m][tid & 31] = __expf(0.5f * (a_hi - a_lo));
+    __syncthreads();
+
+    bool wide = false;
+#pragma unroll
+    for (int it = 0; it < 2; ++it) {
+        const int r  = (tid + 128 * it) >> 2;
+        const int c8 = (tid & 3) * 8;
+        const int J  = (r + 8) >> 4;
+        const __half2* qh2 = reinterpret_cast<const __half2*>(&qv8[it]);
+        const __half2* kh2 = reinterpret_cast<const __half2*>(&kv8[it]);
+        const float4 g0 = gv[it][0], g1 = gv[it][1], a0 = av[it][0], a1 = av[it][1];
+        const float ga[8] = {g0.x - a0.x, g0.y - a0.y, g0.z - a0.z, g0.w - a0.w,
+                             g1.x - a1.x, g1.y - a1.y, g1.z - a1.z, g1.w - a1.w};
+        float x[8], y[8];
+#pragma unroll
+        for (int c = 0; c < 8; ++c) wide |= fabsf(ga[c]) > kMaxGrowth;
+        // The row's own group J: query copy J and the key.
+#pragma unroll
+        for (int p = 0; p < 4; ++p) {
+            const float2 q2 = __half22float2(qh2[p]);
+            const float2 k2 = __half22float2(kh2[p]);
+            const float e0 = __expf(ga[2 * p]), e1 = __expf(ga[2 * p + 1]);
+            x[2 * p] = q2.x * e0; x[2 * p + 1] = q2.y * e1;
+            y[2 * p] = k2.x / e0; y[2 * p + 1] = k2.y / e1;
+        }
+        st_bf16x8(J == 0 ? &sQt[r][c8] : &sQv[qv_row(J, r)][c8], x);
+        st_bf16x8(&sKt[r][c8], y);
+        for (int j = J; j > 0; --j) {
+            const float4 d0 = *reinterpret_cast<const float4*>(&sDecay[j - 1][c8]);
+            const float4 d1 = *reinterpret_cast<const float4*>(&sDecay[j - 1][c8 + 4]);
+            const float d[8] = {d0.x, d0.y, d0.z, d0.w, d1.x, d1.y, d1.z, d1.w};
+            // Two separate multiplies (never d * d): no intermediate underflows unless the result does.
+#pragma unroll
+            for (int c = 0; c < 8; ++c) x[c] = __fmul_rn(__fmul_rn(x[c], d[c]), d[c]);
+            st_bf16x8(j == 1 ? &sQt[r][c8] : &sQv[qv_row(j - 1, r)][c8], x);
+        }
+    }
+    return wide;
+}
+
+template <typename Row, typename ARow>
+__device__ __noinline__ void exact_attn_chunk(
+    Row* sQt, ARow* sA, const __half* __restrict__ q, const __half* __restrict__ k, const float* __restrict__ G,
+    int tid, int t_base, int T, int base_k, int stride_t_k) {
+    const int c8 = (tid & 3) * 8;
+#pragma unroll 1
+    for (int it = 0; it < 2; ++it) {
+        const int i = (tid + 128 * it) >> 2;
+        const bool valid = t_base + i < T;
+        float qi[8], gi[8];
+#pragma unroll
+        for (int c = 0; c < 8; ++c) qi[c] = gi[c] = 0.f;
+        if (valid) {
+            const size_t off = (size_t)base_k + (size_t)(t_base + i) * stride_t_k + c8;
+            const uint4 q8 = *reinterpret_cast<const uint4*>(q + off);
+            const __half2* qh2 = reinterpret_cast<const __half2*>(&q8);
+            const float4 g0 = *reinterpret_cast<const float4*>(G + off);
+            const float4 g1 = *reinterpret_cast<const float4*>(G + off + 4);
+#pragma unroll
+            for (int p = 0; p < 4; ++p) {
+                const float2 q2 = __half22float2(qh2[p]);
+                qi[2 * p] = q2.x;
+                qi[2 * p + 1] = q2.y;
+            }
+            gi[0] = g0.x; gi[1] = g0.y; gi[2] = g0.z; gi[3] = g0.w;
+            gi[4] = g1.x; gi[5] = g1.y; gi[6] = g1.z; gi[7] = g1.w;
+        }
+        float x[8];
+#pragma unroll
+        for (int c = 0; c < 8; ++c) x[c] = qi[c] * __expf(gi[c]);
+        st_bf16x8(&sQt[i][c8], x);
+#pragma unroll 1
+        for (int j = 0; j < kBT; ++j) {
+            float s = 0.f;
+            if (valid && j <= i) {
+                const size_t off = (size_t)base_k + (size_t)(t_base + j) * stride_t_k + c8;
+                const uint4 k8 = *reinterpret_cast<const uint4*>(k + off);
+                const __half2* kh2 = reinterpret_cast<const __half2*>(&k8);
+                const float4 g0 = *reinterpret_cast<const float4*>(G + off);
+                const float4 g1 = *reinterpret_cast<const float4*>(G + off + 4);
+                const float gj[8] = {g0.x, g0.y, g0.z, g0.w, g1.x, g1.y, g1.z, g1.w};
+#pragma unroll
+                for (int p = 0; p < 4; ++p) {
+                    const float2 k2 = __half22float2(kh2[p]);
+                    s += qi[2 * p] * k2.x * __expf(gi[2 * p] - gj[2 * p]);
+                    s += qi[2 * p + 1] * k2.y * __expf(gi[2 * p + 1] - gj[2 * p + 1]);
+                }
+            }
+            s += __shfl_xor_sync(0xffffffffu, s, 1);
+            s += __shfl_xor_sync(0xffffffffu, s, 2);
+            if ((tid & 3) == 0) sA[i][j] = __float2half(s);
+        }
+    }
+}
+
+template <typename Row>
+__device__ __forceinline__ void load_q_fragment(
+    uint32_t* A, Row* sQt, Row* sQv, int J, int m_base, int kc_base, int gid, int tig) {
+    const Row* src = J == 0 ? sQt : sQv;
+    const int row = (J == 0 ? m_base : qv_row(J, m_base)) + gid;
+    const int c0 = kc_base + 2 * tig;
+    A[0] = 0u;
+    A[2] = 0u;
+    if (J == 0 || m_base >= 16 * J) {
+        A[0] = *reinterpret_cast<const uint32_t*>(&src[row][c0]);
+        A[2] = *reinterpret_cast<const uint32_t*>(&src[row][c0 + 8]);
+    }
+    A[1] = *reinterpret_cast<const uint32_t*>(&src[row + 8][c0]);
+    A[3] = *reinterpret_cast<const uint32_t*>(&src[row + 8][c0 + 8]);
+}
+
 __launch_bounds__(128, 4)
 __global__ void chunk_compute_S_kernel(
     const __half* __restrict__ k,
     const __half* __restrict__ v,
     const __half* __restrict__ gk,
-    __half*       __restrict__ G,
+    float*        __restrict__ G,
     float*        __restrict__ S,
     float*        __restrict__ eG_last,
     int T, int H, int NT,
@@ -184,7 +346,7 @@ __global__ void chunk_fwd_o_kernel(
     const __half* __restrict__ q,
     const __half* __restrict__ k,
     const __half* __restrict__ v,
-    const __half* __restrict__ G,
+    const float*  __restrict__ G,
     const float*  __restrict__ h_in,
     __half*       __restrict__ o,
     int T, int H, int NT, float scale,
@@ -229,6 +391,7 @@ __global__ void chunk_fwd_o_kernel(
     __shared__ __half        sV [kBT][kV + kPad];
     __shared__ __nv_bfloat16 sH [kK][kV + kPad];
     __shared__ __half        sA [kBT][kBT + kPad];
+    __shared__ __align__(16) float sDecay[4][kK];
 
 #pragma unroll
     for (int i = tid; i < kBT * kV / 8; i += 128) {
@@ -242,37 +405,8 @@ __global__ void chunk_fwd_o_kernel(
     }
     cp_async_commit();
 
-#pragma unroll
-    for (int i = tid; i < kBT * kK / 8; i += 128) {
-        const int r  = i >> 2;
-        const int c8 = (i & 3) * 8;
-        const int t  = t_base + r;
-        uint4 qv8 = make_uint4(0, 0, 0, 0), kv8 = make_uint4(0, 0, 0, 0);
-        uint4 gv8 = make_uint4(0, 0, 0, 0);
-        if (t < T) {
-            const size_t off = (size_t)base_k + (size_t)t * stride_t_k + c8;
-            qv8 = *reinterpret_cast<const uint4*>(q + off);
-            kv8 = *reinterpret_cast<const uint4*>(k + off);
-            gv8 = *reinterpret_cast<const uint4*>(G + off);
-        }
-        const __half2* qh2 = reinterpret_cast<const __half2*>(&qv8);
-        const __half2* kh2 = reinterpret_cast<const __half2*>(&kv8);
-        const __half2* gh2 = reinterpret_cast<const __half2*>(&gv8);
-        __nv_bfloat162 qb[4], kb[4];
-#pragma unroll
-        for (int p = 0; p < 4; ++p) {
-            const float2 qf = __half22float2(qh2[p]);
-            const float2 kf = __half22float2(kh2[p]);
-            const float2 gf = __half22float2(gh2[p]);
-            const float eg0 = __expf(gf.x), eg1 = __expf(gf.y);
-            qb[p] = __floats2bfloat162_rn(qf.x * eg0, qf.y * eg1);
-            kb[p] = __floats2bfloat162_rn(kf.x / eg0, kf.y / eg1);
-        }
-        *reinterpret_cast<uint2*>(&sQt[r][c8])     = *reinterpret_cast<const uint2*>(&qb[0]);
-        *reinterpret_cast<uint2*>(&sQt[r][c8 + 4]) = *reinterpret_cast<const uint2*>(&qb[2]);
-        *reinterpret_cast<uint2*>(&sKt[r][c8])     = *reinterpret_cast<const uint2*>(&kb[0]);
-        *reinterpret_cast<uint2*>(&sKt[r][c8 + 4]) = *reinterpret_cast<const uint2*>(&kb[2]);
-    }
+    auto sQv = reinterpret_cast<__nv_bfloat16 (*)[kK + kPadQK]>(&sA[0][0]);
+    const bool wide = load_qk_chunk(sQt, sKt, sQv, sDecay, q, k, G, tid, t_base, T, base_k, stride_t_k);
     if constexpr (kInlineScan) {
         const int r  = tid >> 2;
         const int c8 = (tid & 3) * 16;
@@ -315,7 +449,7 @@ __global__ void chunk_fwd_o_kernel(
             *reinterpret_cast<uint4*>(&sH[r][c8]) = *reinterpret_cast<const uint4*>(hb);
         }
     }
-    __syncthreads();
+    const bool exact = __syncthreads_or(wide);
 
     auto pack = [&](__nv_bfloat16 h0, __nv_bfloat16 h1) -> uint32_t {
         __nv_bfloat162 p = __halves2bfloat162(h0, h1);
@@ -341,19 +475,13 @@ __global__ void chunk_fwd_o_kernel(
             const int m_base = m_row_base + mt * 16;
             if (n_col_base >= m_base + 16) continue;
             uint32_t A[4];
-            const int r0 = m_base + gid;
-            const int r1 = m_base + gid + 8;
-            const int c0 = kc_base + 2 * tig;
-            const int c8 = kc_base + 2 * tig + 8;
-            A[0] = pack(sQt[r0][c0    ], sQt[r0][c0 + 1]);
-            A[1] = pack(sQt[r1][c0    ], sQt[r1][c0 + 1]);
-            A[2] = pack(sQt[r0][c8    ], sQt[r0][c8 + 1]);
-            A[3] = pack(sQt[r1][c8    ], sQt[r1][c8 + 1]);
 
 #pragma unroll
             for (int nt = 0; nt < 4; ++nt) {
                 const int n_base = n_col_base + nt * 8;
                 if (n_base >= m_base + 16) continue;
+                // n-tiles 1 and 2 belong to the same key group and share the query copy.
+                if (nt != 2) load_q_fragment(A, sQt, sQv, (n_base + 8) >> 4, m_base, kc_base, gid, tig);
                 uint32_t B[2];
                 const int col_n = n_base + gid;
                 B[0] = pack(sKt[col_n][kc_base + 2 * tig],     sKt[col_n][kc_base + 2 * tig + 1]);
@@ -366,6 +494,8 @@ __global__ void chunk_fwd_o_kernel(
             }
         }
     }
+    // Every warp is done reading the query copies; sA can now take the products.
+    __syncthreads();
 
 #pragma unroll
     for (int mt = 0; mt < 2; ++mt) {
@@ -385,6 +515,11 @@ __global__ void chunk_fwd_o_kernel(
             *reinterpret_cast<__half2*>(&sA[r0][c0]) = __floats2half2_rn(m0, m1);
             *reinterpret_cast<__half2*>(&sA[r1][c0]) = __floats2half2_rn(m2, m3);
         }
+    }
+    if (exact) {
+        // The products above came from copies that need not be finite; replace them.
+        __syncthreads();
+        exact_attn_chunk(sQt, sA, q, k, G, tid, t_base, T, base_k, stride_t_k);
     }
     cp_async_wait_all();
     __syncthreads();
@@ -585,7 +720,7 @@ __global__ void chunk_compute_S_kernel(
     const __half* __restrict__ k,
     const __half* __restrict__ v,
     const __half* __restrict__ gk,
-    __half*       __restrict__ G,
+    float*        __restrict__ G,
     float*        __restrict__ S,
     float*        __restrict__ eG_last,
     int T, int H, int NT,
@@ -679,7 +814,7 @@ __global__ void chunk_compute_S_kernel(
             const int t = t_base + r;
             if (t < T) {
                 const float G_r = warp_offset + local_acc[rr];
-                G[base_k + t * stride_t_k + c] = __float2half(G_r);
+                G[base_k + t * stride_t_k + c] = G_r;
                 const float kraw =
                     __half2float(k[base_k + t * stride_t_k + c]);
                 sKt[r][c] = __float2half(kraw * __expf(total - G_r));
@@ -767,7 +902,7 @@ __global__ void chunk_scan_h_seq_kernel(
     int H, int NT) {
     const int i_bh = blockIdx.x;
     const int i_k  = blockIdx.y;
-    const int b = 0;
+    const int b = i_bh / H;
     const int h = i_bh % H;
     const int v = threadIdx.x;
 
@@ -832,7 +967,7 @@ __global__ void chunk_scan_fwd_kernel(
     const __half* __restrict__ q,
     const __half* __restrict__ k,
     const __half* __restrict__ v,
-    const __half* __restrict__ G,
+    const float*  __restrict__ G,
     const float*  __restrict__ S_ws,
     const float*  __restrict__ eL_ws,
     float*        __restrict__ h_ws,
@@ -948,6 +1083,7 @@ __global__ void chunk_scan_fwd_kernel(
     __shared__ __align__(16) __half        sV [kBT][kV + kPad];
     __shared__ __align__(16) __nv_bfloat16 sH [kK][kV + kPad];
     __shared__ __align__(16) __half        sA [kBT][kBT + kPad];
+    __shared__ __align__(16) float         sDecay[4][kK];
 
 #pragma unroll
     for (int i = tid; i < kBT * kV / 8; i += 128) {
@@ -961,38 +1097,10 @@ __global__ void chunk_scan_fwd_kernel(
     }
     cp_async_commit();
 
-#pragma unroll
-    for (int i = tid; i < kBT * kK / 8; i += 128) {
-        const int r  = i >> 2;
-        const int c8 = (i & 3) * 8;
-        const int t  = t_base + r;
-        uint4 qv8 = make_uint4(0, 0, 0, 0), kv8 = make_uint4(0, 0, 0, 0);
-        uint4 gv8 = make_uint4(0, 0, 0, 0);
-        if (t < T) {
-            const size_t off = (size_t)base_k + (size_t)t * stride_t_k + c8;
-            qv8 = *reinterpret_cast<const uint4*>(q + off);
-            kv8 = *reinterpret_cast<const uint4*>(k + off);
-            gv8 = *reinterpret_cast<const uint4*>(G + off);
-        }
-        const __half2* qh2 = reinterpret_cast<const __half2*>(&qv8);
-        const __half2* kh2 = reinterpret_cast<const __half2*>(&kv8);
-        const __half2* gh2 = reinterpret_cast<const __half2*>(&gv8);
-        __nv_bfloat162 qb[4], kb[4];
-#pragma unroll
-        for (int p = 0; p < 4; ++p) {
-            const float2 qf = __half22float2(qh2[p]);
-            const float2 kf = __half22float2(kh2[p]);
-            const float2 gf = __half22float2(gh2[p]);
-            const float eg0 = __expf(gf.x), eg1 = __expf(gf.y);
-            qb[p] = __floats2bfloat162_rn(qf.x * eg0, qf.y * eg1);
-            kb[p] = __floats2bfloat162_rn(kf.x / eg0, kf.y / eg1);
-        }
-        *reinterpret_cast<uint2*>(&sQt[r][c8])     = *reinterpret_cast<const uint2*>(&qb[0]);
-        *reinterpret_cast<uint2*>(&sQt[r][c8 + 4]) = *reinterpret_cast<const uint2*>(&qb[2]);
-        *reinterpret_cast<uint2*>(&sKt[r][c8])     = *reinterpret_cast<const uint2*>(&kb[0]);
-        *reinterpret_cast<uint2*>(&sKt[r][c8 + 4]) = *reinterpret_cast<const uint2*>(&kb[2]);
-    }
-    __syncthreads();
+    // The query copies borrow sA, which is not written until the A = Q K^T products are done.
+    auto sQv = reinterpret_cast<__nv_bfloat16 (*)[kK + kPadQK]>(&sA[0][0]);
+    const bool wide = load_qk_chunk(sQt, sKt, sQv, sDecay, q, k, G, tid, t_base, T, base_k, stride_t_k);
+    const bool exact = __syncthreads_or(wide);
 
     auto pack = [&](__nv_bfloat16 h0, __nv_bfloat16 h1) -> uint32_t {
         __nv_bfloat162 p = __halves2bfloat162(h0, h1);
@@ -1017,18 +1125,12 @@ __global__ void chunk_scan_fwd_kernel(
             const int m_base = m_row_base + mt * 16;
             if (n_col_base >= m_base + 16) continue;
             uint32_t A[4];
-            const int r0 = m_base + gid;
-            const int r1 = m_base + gid + 8;
-            const int c0 = kc_base + 2 * tig;
-            const int c8 = kc_base + 2 * tig + 8;
-            A[0] = pack(sQt[r0][c0    ], sQt[r0][c0 + 1]);
-            A[1] = pack(sQt[r1][c0    ], sQt[r1][c0 + 1]);
-            A[2] = pack(sQt[r0][c8    ], sQt[r0][c8 + 1]);
-            A[3] = pack(sQt[r1][c8    ], sQt[r1][c8 + 1]);
 #pragma unroll
             for (int nt = 0; nt < 4; ++nt) {
                 const int n_base = n_col_base + nt * 8;
                 if (n_base >= m_base + 16) continue;
+                // n-tiles 1 and 2 belong to the same key group and share the query copy.
+                if (nt != 2) load_q_fragment(A, sQt, sQv, (n_base + 8) >> 4, m_base, kc_base, gid, tig);
                 uint32_t Bf[2];
                 const int col_n = n_base + gid;
                 Bf[0] = pack(sKt[col_n][kc_base + 2 * tig],     sKt[col_n][kc_base + 2 * tig + 1]);
@@ -1041,6 +1143,8 @@ __global__ void chunk_scan_fwd_kernel(
             }
         }
     }
+    // Every warp is done reading the query copies; sA can now take the products.
+    __syncthreads();
 
 #pragma unroll
     for (int mt = 0; mt < 2; ++mt) {
@@ -1060,6 +1164,11 @@ __global__ void chunk_scan_fwd_kernel(
             *reinterpret_cast<__half2*>(&sA[r0][c0]) = __floats2half2_rn(m0, m1);
             *reinterpret_cast<__half2*>(&sA[r1][c0]) = __floats2half2_rn(m2, m3);
         }
+    }
+    if (exact) {
+        // The products above came from copies that need not be finite; replace them.
+        __syncthreads();
+        exact_attn_chunk(sQt, sA, q, k, G, tid, t_base, T, base_k, stride_t_k);
     }
     cp_async_wait_all();
     __syncthreads();
@@ -1359,12 +1468,11 @@ inline void launch_chunk_gla(
         const int slots = scan_fwd_resident_blocks(fuse_gate);
         const bool wave_aligned = (slots > 0) && (BH * NT % slots == 0);
         if (NT >= 6 && !wave_aligned && slots >= n_scan_blocks + 1) {
-            __half* workspace_G2 = reinterpret_cast<__half*>(workspace_eG);
             {
                 dim3 grid(NT, BH, 1);
                 dim3 block(kK, 4);
                 chunk_compute_S_kernel<<<grid, block, 0, stream>>>(
-                    k, v, gk, workspace_G2, workspace_S, workspace_eL,
+                    k, v, gk, workspace_eG, workspace_S, workspace_eL,
                     T, H, NT, inv_norm_arg);
             }
             {
@@ -1373,12 +1481,12 @@ inline void launch_chunk_gla(
                 dim3 block(128);
                 if (fuse_gate) {
                     chunk_scan_fwd_kernel<true><<<grid, block, 0, stream>>>(
-                        q, k, v, workspace_G2, workspace_S, workspace_eL,
+                        q, k, v, workspace_eG, workspace_S, workspace_eL,
                         workspace_h, h_done, o, B, T, H, NT, scale,
                         g_in, rms_w, rms_eps);
                 } else {
                     chunk_scan_fwd_kernel<false><<<grid, block, 0, stream>>>(
-                        q, k, v, workspace_G2, workspace_S, workspace_eL,
+                        q, k, v, workspace_eG, workspace_S, workspace_eL,
                         workspace_h, h_done, o, B, T, H, NT, scale,
                         nullptr, nullptr, rms_eps);
                 }
@@ -1390,12 +1498,11 @@ inline void launch_chunk_gla(
     constexpr int kInlineScanMaxNT = 16;
     const bool inline_scan = (NT <= kInlineScanMaxNT);
 
-    __half* workspace_G = reinterpret_cast<__half*>(workspace_eG);
     {
         dim3 grid(NT, B * H, 1);
         dim3 block(kK, 4);
         chunk_compute_S_kernel<<<grid, block, 0, stream>>>(
-            k, v, gk, workspace_G, workspace_S, workspace_eL,
+            k, v, gk, workspace_eG, workspace_S, workspace_eL,
             T, H, NT, inv_norm_arg);
     }
 
@@ -1412,21 +1519,21 @@ inline void launch_chunk_gla(
         if (fuse_gate) {
             if (inline_scan) {
                 chunk_fwd_o_kernel<true, true><<<grid, block, 0, stream>>>(
-                    q, k, v, workspace_G, workspace_h, o, T, H, NT, scale,
+                    q, k, v, workspace_eG, workspace_h, o, T, H, NT, scale,
                     g_in, rms_w, rms_eps, workspace_S, workspace_eL);
             } else {
                 chunk_fwd_o_kernel<true, false><<<grid, block, 0, stream>>>(
-                    q, k, v, workspace_G, workspace_h, o, T, H, NT, scale,
+                    q, k, v, workspace_eG, workspace_h, o, T, H, NT, scale,
                     g_in, rms_w, rms_eps);
             }
         } else {
             if (inline_scan) {
                 chunk_fwd_o_kernel<false, true><<<grid, block, 0, stream>>>(
-                    q, k, v, workspace_G, workspace_h, o, T, H, NT, scale,
+                    q, k, v, workspace_eG, workspace_h, o, T, H, NT, scale,
                     nullptr, nullptr, 1e-6f, workspace_S, workspace_eL);
             } else {
                 chunk_fwd_o_kernel<false, false><<<grid, block, 0, stream>>>(
-                    q, k, v, workspace_G, workspace_h, o, T, H, NT, scale);
+                    q, k, v, workspace_eG, workspace_h, o, T, H, NT, scale);
             }
         }
     }
